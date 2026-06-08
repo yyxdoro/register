@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>Production Register Chain</title>
+<style>
+  body { margin: 0; background: #f6f8fb; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #162033; }
+  .wrap { width: 1180px; padding: 40px; box-sizing: border-box; }
+  .card { background: white; border: 1px solid #dbe3ef; border-radius: 20px; padding: 30px; box-shadow: 0 16px 50px rgba(23, 38, 70, .10); }
+  h1 { margin: 0 0 8px; font-size: 30px; }
+  .sub { color: #64748b; font-size: 16px; margin-bottom: 26px; }
+  .env { display: grid; grid-template-columns: 160px 1fr; gap: 8px 18px; background: #f8fafc; border-radius: 14px; padding: 18px; margin-bottom: 24px; font-size: 15px; }
+  .k { color: #64748b; }
+  .v { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+  .timeline { display: grid; gap: 14px; }
+  .step { display: grid; grid-template-columns: 58px 1fr 120px; align-items: start; gap: 16px; padding: 18px; border: 1px solid #e2e8f0; border-radius: 16px; background: #fff; }
+  .num { width: 42px; height: 42px; border-radius: 999px; display: grid; place-items: center; background: #e0f2fe; color: #0369a1; font-weight: 700; }
+  .title { font-size: 18px; font-weight: 700; margin-bottom: 6px; }
+  .url { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; color: #334155; font-size: 14px; line-height: 1.5; word-break: break-all; }
+  .meta { color: #64748b; margin-top: 8px; font-size: 14px; }
+  .status { text-align: center; border-radius: 999px; padding: 8px 10px; font-weight: 700; font-size: 14px; }
+  .ok { background: #dcfce7; color: #166534; }
+  .warn { background: #fef3c7; color: #92400e; }
+  .fail { background: #fee2e2; color: #991b1b; }
+  .note { margin-top: 24px; padding: 16px 18px; border-left: 5px solid #ef4444; background: #fff7ed; border-radius: 12px; line-height: 1.55; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>线上注册链路执行结果</h1>
+      <div class="sub">2026-06-01，本次邮箱：<span class="v">vast-testmpux5naus3l0epvog5@zabrian.com</span></div>
+      <div class="env">
+        <div class="k">ENV</div><div class="v">production</div>
+        <div class="k">AUTH_BASE_URL</div><div class="v">https://auth.tripo3d.ai</div>
+        <div class="k">CODE_BASE_URL</div><div class="v">https://vast.zabrian.com</div>
+        <div class="k">API_BASE_URL</div><div class="v">https://api.tripo3d.ai</div>
+        <div class="k">WEB_ORIGIN</div><div class="v">https://web.tripo3d.ai</div>
+        <div class="k">APP_ORIGIN</div><div class="v">https://studio.tripo3d.ai</div>
+      </div>
+      <div class="timeline">
+        <div class="step"><div class="num">1</div><div><div class="title">check identifier</div><div class="url">POST https://auth.tripo3d.ai/idp-ext/auth/check-identifier</div><div class="meta">flow_type=registration，邮箱可进入注册流</div></div><div class="status ok">200 OK</div></div>
+        <div class="step"><div class="num">2</div><div><div class="title">get registration browser flow</div><div class="url">GET https://auth.tripo3d.ai/self-service/registration/browser</div><div class="meta">flow_id=d3117657-9b7a-4a57-bcbc-acf45c50efec，csrf_token present</div></div><div class="status ok">200 OK</div></div>
+        <div class="step"><div class="num">3</div><div><div class="title">send registration code</div><div class="url">POST https://auth.tripo3d.ai/self-service/registration?flow=d3117657-9b7a-4a57-bcbc-acf45c50efec</div><div class="meta">active=code，state=sent_email；该 400 是 Ory 邮箱验证码中间态</div></div><div class="status warn">400 sent_email</div></div>
+        <div class="step"><div class="num">4</div><div><div class="title">get email code</div><div class="url">GET https://vast.zabrian.com/code?email=...&format=json</div><div class="meta">当前机器 DNS 无法解析 vast.zabrian.com，未能取到验证码，因此未进入提交验证码和业务接口校验</div></div><div class="status fail">DNS failed</div></div>
+      </div>
+      <div class="note">结论：线上注册前 3 步已走通，并已触发发送注册验证码；流程卡在验证码服务域名 <span class="v">vast.zabrian.com</span> 无法解析。需要提供线上可访问的 CODE_BASE_URL 或修复 DNS 后才能完成账号注册。</div>
+    </div>
+  </div>
+</body>
+</html>

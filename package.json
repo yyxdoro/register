@@ -1,0 +1,15 @@
+{
+  "name": "register-flow-runner",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "register": "node index.js",
+    "register:test": "node index.js --env test",
+    "register:prod": "node index.js --env production",
+    "start": "node index.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

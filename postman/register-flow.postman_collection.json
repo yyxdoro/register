@@ -1,0 +1,322 @@
+{
+  "info": {
+    "name": "Tripo Register Flow Runner",
+    "description": "One-click Postman runner for the Tripo email registration flow. Import this collection together with register-flow.postman_environment.json, select the environment, then run the collection. If the verification code service is eventually consistent, set a Runner delay such as 3000 ms so the code polling loop has time between attempts. A successful auth registration is the primary success signal; business persistence can be checked via the final profile/detail request response.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "const configuredEmail = pm.environment.get('register_email');",
+          "let runtimeEmail = pm.environment.get('runtime_register_email');",
+          "if (!runtimeEmail) {",
+          "  if (configuredEmail && !configuredEmail.includes('{{')) {",
+          "    runtimeEmail = configuredEmail;",
+          "  } else {",
+          "    const prefix = pm.environment.get('email_prefix') || 'vast-test';",
+          "    const domain = pm.environment.get('email_domain') || 'zabrian.com';",
+          "    runtimeEmail = `${prefix}${Date.now()}@${domain}`;",
+          "  }",
+          "  pm.environment.set('runtime_register_email', runtimeEmail);",
+          "}",
+          "pm.request.headers.upsert({ key: 'Origin', value: pm.environment.get('web_origin') || '' });",
+          "pm.request.headers.upsert({ key: 'Referer', value: `${pm.environment.get('web_origin') || ''}/` });"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "01 Check identifier",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('check identifier returns 2xx', () => pm.response.to.be.success);",
+              "const json = pm.response.json();",
+              "const flowType = json && json.data && json.data.flow_type;",
+              "pm.environment.set('flow_type', flowType || '');",
+              "pm.test('email enters registration flow', () => {",
+              "  pm.expect(flowType || 'registration').to.eql('registration');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Accept", "value": "*/*" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"identifier\": \"{{runtime_register_email}}\"\n}"
+        },
+        "url": {
+          "raw": "{{auth_base_url}}/idp-ext/auth/check-identifier",
+          "host": ["{{auth_base_url}}"],
+          "path": ["idp-ext", "auth", "check-identifier"]
+        }
+      }
+    },
+    {
+      "name": "02 Get registration browser flow",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('registration browser flow returns 2xx', () => pm.response.to.be.success);",
+              "const json = pm.response.json();",
+              "pm.environment.set('registration_flow_id', json.id || '');",
+              "const nodes = (json.ui && json.ui.nodes) || [];",
+              "const csrfNode = nodes.find(n => n.attributes && n.attributes.name === 'csrf_token');",
+              "pm.environment.set('csrf_token', csrfNode && csrfNode.attributes ? csrfNode.attributes.value || '' : '');",
+              "pm.test('flow id exists', () => pm.expect(pm.environment.get('registration_flow_id')).to.not.be.empty);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Accept", "value": "application/json" }
+        ],
+        "url": {
+          "raw": "{{auth_base_url}}/self-service/registration/browser",
+          "host": ["{{auth_base_url}}"],
+          "path": ["self-service", "registration", "browser"]
+        }
+      }
+    },
+    {
+      "name": "03 Send registration code",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('send code returns accepted state', () => pm.expect([200, 400]).to.include(pm.response.code));",
+              "const json = pm.response.json();",
+              "if (json.id) pm.environment.set('registration_flow_id', json.id);",
+              "const nodes = (json.ui && json.ui.nodes) || [];",
+              "const csrfNode = nodes.find(n => n.attributes && n.attributes.name === 'csrf_token');",
+              "if (csrfNode && csrfNode.attributes && csrfNode.attributes.value) pm.environment.set('csrf_token', csrfNode.attributes.value);",
+              "pm.environment.set('registration_state', json.state || json.active || '');",
+              "pm.environment.set('code_poll_attempt', '0');"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Accept", "value": "application/json" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"method\": \"code\",\n  \"traits\": {\n    \"email\": \"{{runtime_register_email}}\"\n  },\n  \"transient_payload\": {\n    \"receiveMarketing\": true\n  },\n  \"csrf_token\": \"{{csrf_token}}\"\n}"
+        },
+        "url": {
+          "raw": "{{auth_base_url}}/self-service/registration?flow={{registration_flow_id}}",
+          "host": ["{{auth_base_url}}"],
+          "path": ["self-service", "registration"],
+          "query": [{ "key": "flow", "value": "{{registration_flow_id}}" }]
+        }
+      }
+    },
+    {
+      "name": "04 Poll email code",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const token = pm.environment.get('code_auth_token') || '';",
+              "if (token) {",
+              "  pm.request.headers.upsert({ key: 'Authorization', value: token.startsWith('Bearer ') ? token : `Bearer ${token}` });",
+              "}"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "let json = {};",
+              "try { json = pm.response.json(); } catch (e) {}",
+              "const code = json.code || '';",
+              "if (code) {",
+              "  pm.environment.set('registration_code', code);",
+              "  pm.test('email code found', () => pm.expect(code).to.not.be.empty);",
+              "} else {",
+              "  const attempt = Number(pm.environment.get('code_poll_attempt') || 0) + 1;",
+              "  const maxAttempts = Number(pm.environment.get('code_poll_max_attempts') || 20);",
+              "  pm.environment.set('code_poll_attempt', String(attempt));",
+              "  if (attempt < maxAttempts) {",
+              "    postman.setNextRequest('04 Poll email code');",
+              "  } else {",
+              "    pm.test('email code found before max attempts', () => pm.expect(code, `No code after ${attempt} attempts`).to.not.be.empty);",
+              "  }",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Accept", "value": "application/json" }
+        ],
+        "url": {
+          "raw": "{{code_base_url}}/code?email={{runtime_register_email}}&format=json",
+          "host": ["{{code_base_url}}"],
+          "path": ["code"],
+          "query": [
+            { "key": "email", "value": "{{runtime_register_email}}" },
+            { "key": "format", "value": "json" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "05 Submit registration code",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('submit registration succeeds or redirects', () => pm.expect([200, 302, 303]).to.include(pm.response.code));",
+              "let json = {};",
+              "try { json = pm.response.json(); } catch (e) {}",
+              "if (json.identity && json.identity.id) pm.environment.set('identity_id', json.identity.id);",
+              "if (json.session && json.session.id) pm.environment.set('session_id', json.session.id);",
+              "if (json.session_token) pm.environment.set('session_token', json.session_token);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Accept", "value": "application/json" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"code\": \"{{registration_code}}\",\n  \"method\": \"code\",\n  \"traits\": {\n    \"email\": \"{{runtime_register_email}}\"\n  },\n  \"transient_payload\": {\n    \"receiveMarketing\": true\n  },\n  \"csrf_token\": \"{{csrf_token}}\"\n}"
+        },
+        "url": {
+          "raw": "{{auth_base_url}}/self-service/registration?flow={{registration_flow_id}}",
+          "host": ["{{auth_base_url}}"],
+          "path": ["self-service", "registration"],
+          "query": [{ "key": "flow", "value": "{{registration_flow_id}}" }]
+        }
+      }
+    },
+    {
+      "name": "06 Whoami identity detail",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('whoami succeeds', () => pm.response.to.be.success);",
+              "const json = pm.response.json();",
+              "if (json.identity && json.identity.id) pm.environment.set('whoami_identity_id', json.identity.id);",
+              "if (json.identity && json.identity.traits && json.identity.traits.email) pm.environment.set('whoami_email', json.identity.traits.email);",
+              "if (json.tokenized) pm.environment.set('tokenized_jwt', json.tokenized);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Accept", "value": "application/json" }
+        ],
+        "url": {
+          "raw": "{{auth_base_url}}/sessions/whoami?tokenize_as=default_jwt",
+          "host": ["{{auth_base_url}}"],
+          "path": ["sessions", "whoami"],
+          "query": [{ "key": "tokenize_as", "value": "default_jwt" }]
+        }
+      }
+    },
+    {
+      "name": "07 Studio business whoami",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Accept", "value": "application/json" },
+          { "key": "Origin", "value": "{{app_origin}}" },
+          { "key": "Referer", "value": "{{app_origin}}/" },
+          { "key": "x-tripo-region", "value": "rg1" }
+        ],
+        "url": {
+          "raw": "{{api_base_url}}/v2/studio/studio/whoami?tokenizeAs=default_jwt",
+          "host": ["{{api_base_url}}"],
+          "path": ["v2", "studio", "studio", "whoami"],
+          "query": [{ "key": "tokenizeAs", "value": "default_jwt" }]
+        }
+      }
+    },
+    {
+      "name": "08 Business profile detail",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const jwt = pm.environment.get('tokenized_jwt') || '';",
+              "if (jwt) pm.request.headers.upsert({ key: 'Authorization', value: `Bearer ${jwt}` });"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('business profile request returns 2xx', () => pm.response.to.be.success);",
+              "let json = {};",
+              "try { json = pm.response.json(); } catch (e) {}",
+              "const data = json.data || {};",
+              "const detail = data.detail || {};",
+              "pm.environment.set('profile_user_id', detail.userId || data.user_id || data.uid || json.user_id || json.uid || data.id || json.id || '');",
+              "pm.environment.set('profile_email', detail.email || data.email || json.email || data.user_email || json.user_email || '');"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Accept", "value": "*/*" },
+          { "key": "Origin", "value": "{{app_origin}}" },
+          { "key": "Referer", "value": "{{app_origin}}/" },
+          { "key": "x-tripo-region", "value": "rg1" }
+        ],
+        "url": {
+          "raw": "{{api_base_url}}/v2/web/user/profile/detail",
+          "host": ["{{api_base_url}}"],
+          "path": ["v2", "web", "user", "profile", "detail"]
+        }
+      }
+    }
+  ]
+}

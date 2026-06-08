@@ -1,0 +1,7 @@
+.DS_Store
+.env
+node_modules/
+debug-output/
+production-registered-accounts.json
+registered-accounts.json
+*.log
