@@ -432,6 +432,19 @@ async function createOtpeboxApiKey(client, codeBaseUrl, inbox) {
   return json.key;
 }
 
+function firstOtpeboxMessage(json) {
+  const messages = json?.messages || json?.items || json?.data?.messages || json?.data?.items || [];
+  return Array.isArray(messages) ? messages[0] : null;
+}
+
+function otpeboxMessageId(message) {
+  return message?.id || message?.message_id || message?.messageId || '';
+}
+
+function otpeboxMessageText(json) {
+  return json?.text || json?.data?.text || json?.message?.text || json?.data?.message?.text || '';
+}
+
 function isRegistrationConflict(flowType) {
   return flowType && flowType !== 'registration';
 }
@@ -518,22 +531,27 @@ async function registerSingle({ email, accountsFile, env = 'test', authBaseUrl, 
   const codePollSeconds = Number(argValue('code-poll-seconds') || process.env.CODE_POLL_SECONDS || 180);
   const codePollIntervalMs = Number(argValue('code-poll-interval-ms') || process.env.CODE_POLL_INTERVAL_MS || 3000);
   const maxAttempts = positiveInteger(argValue('code-poll-attempts') || process.env.CODE_POLL_ATTEMPTS, Math.ceil((codePollSeconds * 1000) / codePollIntervalMs), 'CODE_POLL_ATTEMPTS/--code-poll-attempts');
+  const otpeboxKey = await createOtpeboxApiKey(client, codeBaseUrl, inbox);
+  const codeHeaders = { Authorization: `Bearer ${otpeboxKey}` };
   let codeResult;
   let codeJson;
   let code;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    codeResult = await client.request(`get email code attempt ${attempt}`, codeBaseUrl, `/api/messages?inbox=${encodeURIComponent(inbox)}`, {
+    codeResult = await client.request(`get email code attempt ${attempt}`, codeBaseUrl, `/api/v1/inboxes/${encodeURIComponent(inbox)}/messages?since=now-10m&until=now&limit=10`, {
       method: 'GET',
+      headers: codeHeaders,
       sendCookies: false,
     });
     codeJson = codeResult.json;
-    const message = codeJson?.messages?.[0];
-    if (message?.id) {
-      const detailResult = await client.request('get email message detail', codeBaseUrl, `/api/message?inbox=${encodeURIComponent(inbox)}&id=${encodeURIComponent(message.id)}`, {
+    const message = firstOtpeboxMessage(codeJson);
+    const messageId = otpeboxMessageId(message);
+    if (messageId) {
+      const detailResult = await client.request('get email message detail', codeBaseUrl, `/api/v1/inboxes/${encodeURIComponent(inbox)}/messages/${encodeURIComponent(messageId)}`, {
         method: 'GET',
+        headers: codeHeaders,
         sendCookies: false,
       });
-      if (detailResult.response.ok) code = extractCodeFromMailText(detailResult.json?.text);
+      if (detailResult.response.ok) code = extractCodeFromMailText(otpeboxMessageText(detailResult.json));
     }
     console.log(`    code: ${code || '(empty)'}`);
     if (code) break;
